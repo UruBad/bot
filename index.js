@@ -378,7 +378,10 @@ class PredictionBot {
             if (data.startsWith('predict_')) {
                 const matchId = parseInt(data.split('_')[1]);
                 await this.startPredictionProcess(chatId, userId, matchId);
-            }
+            } else if (data.startsWith('finish_')) {
+                const matchId = parseInt(data.split('_')[1]);
+                await this.startFinishMatchProcess(chatId, userId, matchId);
+            } 
 
             await this.bot.answerCallbackQuery(callbackQuery.id);
         } catch (error) {
@@ -395,6 +398,47 @@ class PredictionBot {
         // Пропускаем команды
         if (text && text.startsWith('/')) return;
 
+        // Обработка кнопок главной клавиатуры (работают всегда)
+        if (text === '⚽ Матчи') {
+            try {
+                await this.handleMatches(msg);
+            } catch (error) {
+                console.error('Ошибка при обработке кнопки "Матчи":', error);
+                await this.bot.sendMessage(chatId, 'Произошла ошибка. Попробуйте еще раз.');
+            }
+            return;
+        }
+        
+        if (text === '🏆 Таблица лидеров') {
+            try {
+                await this.handleLeaderboard(msg);
+            } catch (error) {
+                console.error('Ошибка при обработке кнопки "Таблица лидеров":', error);
+                await this.bot.sendMessage(chatId, 'Произошла ошибка. Попробуйте еще раз.');
+            }
+            return;
+        }
+        
+        if (text === '📊 Моя статистика') {
+            try {
+                await this.handleStats(msg);
+            } catch (error) {
+                console.error('Ошибка при обработке кнопки "Моя статистика":', error);
+                await this.bot.sendMessage(chatId, 'Произошла ошибка. Попробуйте еще раз.');
+            }
+            return;
+        }
+        
+        if (text === '❓ Помощь') {
+            try {
+                await this.handleHelp(msg);
+            } catch (error) {
+                console.error('Ошибка при обработке кнопки "Помощь":', error);
+                await this.bot.sendMessage(chatId, 'Произошла ошибка. Попробуйте еще раз.');
+            }
+            return;
+        }
+
         const userState = this.userStates.get(userId);
         if (!userState) return;
 
@@ -408,6 +452,8 @@ class PredictionBot {
                 await this.handleAddMatchProcess(msg, userState);
             } else if (userState.action === 'make_prediction') {
                 await this.handlePredictionProcess(msg, userState);
+            } else if (userState.action === 'finish_match') {
+                await this.handleFinishMatchProcess(msg, userState);
             } else if (userState.action === 'add_points') {
                 await this.handleAddPointsProcess(msg, userState);
             } else if (userState.action === 'set_points') {
@@ -460,6 +506,42 @@ class PredictionBot {
         }
     }
 
+    async startFinishMatchProcess(chatId, userId, matchId) {
+        try {
+            // Проверяем права администратора
+            if (!(await this.isAdmin(userId))) {
+                await this.bot.sendMessage(chatId, '❌ Только администраторы могут завершать матчи.');
+                return;
+            }
+
+            const match = await this.db.getMatch(matchId);
+            if (!match) {
+                await this.bot.sendMessage(chatId, '❌ Матч не найден.');
+                return;
+            }
+
+            if (match.is_finished) {
+                await this.bot.sendMessage(chatId, '❌ Матч уже завершен.');
+                return;
+            }
+
+            this.userStates.set(userId, { action: 'finish_match', matchId: matchId });
+            
+            await this.bot.sendMessage(chatId, 
+                `🏁 Завершение матча:\n⚽ ${match.team_a} — ${match.team_b}\n📅 ${moment(match.match_date).format('DD.MM.YYYY HH:mm')}\n\nВведите результат матча в формате "X:Y" (например, 2:1):`,
+                {
+                    reply_markup: { 
+                        keyboard: [['❌ Отмена']], 
+                        resize_keyboard: true 
+                    }
+                }
+            );
+        } catch (error) {
+            console.error('Ошибка при начале процесса завершения матча:', error);
+            await this.bot.sendMessage(chatId, '❌ Ошибка при завершении матча.');
+        }
+    }
+
     async handlePredictionProcess(msg, userState) {
         const chatId = msg.chat.id;
         const userId = msg.from.id;
@@ -480,6 +562,29 @@ class PredictionBot {
         }
 
         await this.makePrediction(chatId, userId, userState.matchId, predA, predB);
+        this.userStates.delete(userId);
+    }
+
+    async handleFinishMatchProcess(msg, userState) {
+        const chatId = msg.chat.id;
+        const userId = msg.from.id;
+        const text = msg.text;
+
+        const match = text.match(/^(\d+):(\d+)$/);
+        if (!match) {
+            await this.bot.sendMessage(chatId, '❌ Неверный формат. Введите результат в формате "X:Y" (например, 2:1)');
+            return;
+        }
+
+        const resultA = parseInt(match[1]);
+        const resultB = parseInt(match[2]);
+
+        if (!ScoringSystem.isValidPrediction(resultA, resultB)) {
+            await this.bot.sendMessage(chatId, '❌ Некорректный результат. Счет должен быть от 0 до 20 голов.');
+            return;
+        }
+
+        await this.finishMatch(chatId, userState.matchId, resultA, resultB);
         this.userStates.delete(userId);
     }
 
@@ -1335,7 +1440,7 @@ class PredictionBot {
             inline_keyboard: [
                 [
                     { text: '🔮 Сделать прогноз', callback_data: `predict_${matchId}` },
-                    { text: '🔮 Матч завершен', callback_data: `finishmatch_${matchId}` }
+                    { text: '🔮 Матч завершен', callback_data: `finish_${matchId}` }
                 ]
             ]
         };
