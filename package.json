@@ -1,0 +1,22 @@
+{
+  "name": "football-prediction-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for football match predictions with scoring system",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": ["telegram", "bot", "football", "predictions", "scoring"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "node-telegram-bot-api": "^0.64.0",
+    "sqlite3": "^5.1.6",
+    "moment": "^2.29.4",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
