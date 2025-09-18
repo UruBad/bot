@@ -1317,8 +1317,14 @@ class PredictionBot {
     getMainKeyboard() {
         return {
             keyboard: [
-                ['⚽ Матчи', '🏆 Таблица лидеров'],
-                ['📊 Моя статистика', '❓ Помощь']
+                [
+                    { text: '⚽ Матчи', callback_data: 'matches' },
+                    { text: '🏆 Таблица лидеров', callback_data: 'leaderboard' },
+                ],
+                [
+                    { text: '📊 Моя статистика', callback_data: 'stats' },
+                    { text: '❓ Помощь', callback_data: 'help' },
+                ],   
             ],
             resize_keyboard: true
         };
@@ -1327,7 +1333,10 @@ class PredictionBot {
     getMatchKeyboard(matchId) {
         return {
             inline_keyboard: [
-                [{ text: '🔮 Сделать прогноз', callback_data: `predict_${matchId}` }]
+                [
+                    { text: '🔮 Сделать прогноз', callback_data: `predict_${matchId}` },
+                    { text: '🔮 Матч завершен', callback_data: `finishmatch_${matchId}` }
+                ]
             ]
         };
     }
