@@ -116,6 +116,18 @@ class Database {
             )
         `);
 
+        // Таблица уведомлений о матчах
+        this.db.run(`
+            CREATE TABLE IF NOT EXISTS match_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id INTEGER NOT NULL,
+                notification_sent DATETIME DEFAULT CURRENT_TIMESTAMP,
+                users_notified INTEGER DEFAULT 0,
+                FOREIGN KEY (match_id) REFERENCES matches (id),
+                UNIQUE(match_id)
+            )
+        `);
+
         // Создаем первый сезон если его нет
         this.db.run(`
             INSERT OR IGNORE INTO seasons (season_number, name, is_active) 
@@ -299,9 +311,10 @@ class Database {
                     SUM(CASE WHEN points_earned = 3 THEN 1 ELSE 0 END) as exact_predictions,
                     SUM(CASE WHEN points_earned = 2 THEN 1 ELSE 0 END) as close_predictions,
                     SUM(CASE WHEN points_earned = 1 THEN 1 ELSE 0 END) as outcome_predictions,
-                    SUM(points_earned) as total_points
+                    SUM(CASE WHEN points_earned = 0 THEN 1 ELSE 0 END) as incorrect_predictions,
+                    SUM(points_earned) as total_points_earned
                  FROM predictions 
-                 WHERE user_id = ? AND points_earned > 0`,
+                 WHERE user_id = ?`,
                 [telegramId],
                 (err, row) => {
                     if (err) reject(err);
@@ -716,6 +729,81 @@ class Database {
                     else resolve(rows);
                 }
             );
+        });
+    }
+
+    // Методы для работы с уведомлениями о матчах
+    async getMatchesForNotification() {
+        return new Promise((resolve, reject) => {
+            const oneHourFromNow = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+            const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+            
+            this.db.all(`
+                SELECT m.* 
+                FROM matches m
+                LEFT JOIN match_notifications mn ON m.id = mn.match_id
+                WHERE m.is_finished = 0 
+                AND m.match_date > ? 
+                AND m.match_date <= ?
+                AND mn.match_id IS NULL
+                ORDER BY m.match_date ASC
+            `, [fiveMinutesFromNow, oneHourFromNow], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+    }
+
+    async markMatchNotificationSent(matchId, usersNotified) {
+        return new Promise((resolve, reject) => {
+            this.db.run(
+                'INSERT OR REPLACE INTO match_notifications (match_id, users_notified) VALUES (?, ?)',
+                [matchId, usersNotified],
+                function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                }
+            );
+        });
+    }
+
+    async isMatchNotificationSent(matchId) {
+        return new Promise((resolve, reject) => {
+            this.db.get(
+                'SELECT * FROM match_notifications WHERE match_id = ?',
+                [matchId],
+                (err, row) => {
+                    if (err) reject(err);
+                    else resolve(!!row);
+                }
+            );
+        });
+    }
+
+    async getAllUsers() {
+        return new Promise((resolve, reject) => {
+            this.db.all(
+                'SELECT telegram_id, username, first_name FROM users ORDER BY telegram_id',
+                (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                }
+            );
+        });
+    }
+
+    async getUsersWithoutPrediction(matchId) {
+        return new Promise((resolve, reject) => {
+            this.db.all(`
+                SELECT u.telegram_id, u.username, u.first_name 
+                FROM users u
+                LEFT JOIN predictions p ON u.telegram_id = p.user_id AND p.match_id = ?
+                WHERE p.user_id IS NULL
+                ORDER BY u.telegram_id
+            `, [matchId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
         });
     }
 

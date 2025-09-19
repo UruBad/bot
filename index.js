@@ -39,6 +39,7 @@ class PredictionBot {
         
         this.initializeAdmins();
         this.setupHandlers();
+        this.startMatchNotificationChecker();
         console.log('🤖 Бот запущен и готов к работе!');
         console.log(`👥 Настроено администраторов: ${this.adminIds.length}`);
         if (this.superAdminId) {
@@ -286,9 +287,11 @@ class PredictionBot {
                 text += `🎯 Точных результатов: ${stats.exact_predictions || 0}\n`;
                 text += `🎲 Разница + исход: ${stats.close_predictions || 0}\n`;
                 text += `⚽ Только исход: ${stats.outcome_predictions || 0}\n`;
+                text += `❌ Неточных/ожидающих: ${stats.incorrect_predictions || 0}\n`;
                 
                 const accuracy = ((stats.exact_predictions || 0) / stats.total_predictions * 100).toFixed(1);
-                text += `📊 Точность: ${accuracy}%`;
+                text += `📊 Точность: ${accuracy}%\n`;
+                text += `💰 Заработано баллов: ${stats.total_points_earned || 0}`;
             } else {
                 text += '\n🤷‍♂️ Прогнозов в этом сезоне пока нет. Сделайте свой первый!';
             }
@@ -381,7 +384,9 @@ class PredictionBot {
             } else if (data.startsWith('finish_')) {
                 const matchId = parseInt(data.split('_')[1]);
                 await this.startFinishMatchProcess(chatId, userId, matchId);
-            } 
+            } else if (data === 'view_matches') {
+                await this.handleViewMatchesCallback(chatId);
+            }
 
             await this.bot.answerCallbackQuery(callbackQuery.id);
         } catch (error) {
@@ -1462,6 +1467,140 @@ class PredictionBot {
         if (lastDigit === 1) return '';
         if (lastDigit >= 2 && lastDigit <= 4) return 'а';
         return 'ов';
+    }
+
+    // Система уведомлений о матчах
+    startMatchNotificationChecker() {
+        // Проверяем каждые 5 минут
+        this.notificationInterval = setInterval(() => {
+            this.checkForMatchNotifications();
+        }, 5 * 60 * 1000); // 5 минут
+
+        // Также делаем первую проверку через 30 секунд после запуска
+        setTimeout(() => {
+            this.checkForMatchNotifications();
+        }, 30 * 1000);
+
+        console.log('🔔 Система уведомлений о матчах запущена');
+    }
+
+    async checkForMatchNotifications() {
+        try {
+            console.log('🔍 Проверка матчей для уведомлений...');
+            const matches = await this.db.getMatchesForNotification();
+            
+            if (matches.length === 0) {
+                console.log('📅 Нет матчей для уведомлений');
+                return;
+            }
+
+            console.log(`📢 Найдено ${matches.length} матч${this.getPointsWord(matches.length)} для уведомлений`);
+            
+            for (const match of matches) {
+                await this.sendMatchNotification(match);
+            }
+        } catch (error) {
+            console.error('❌ Ошибка при проверке уведомлений о матчах:', error);
+        }
+    }
+
+    async sendMatchNotification(match) {
+        try {
+            // Получаем только пользователей, которые еще не сделали прогноз на этот матч
+            const usersWithoutPrediction = await this.db.getUsersWithoutPrediction(match.id);
+            const allUsers = await this.db.getAllUsers();
+            
+            const matchTime = moment(match.match_date);
+            const timeUntilMatch = moment.duration(matchTime.diff(moment()));
+            
+            const notificationText = `🚨 *Скоро матч!*\n\n` +
+                `⚽ **${match.team_a}** — **${match.team_b}**\n` +
+                `📅 ${matchTime.format('DD.MM.YYYY HH:mm')}\n` +
+                `⏰ Начало через ${Math.round(timeUntilMatch.asMinutes())} минут\n\n` +
+                `🔮 Не забудьте сделать свой прогноз!`;
+            
+            let successCount = 0;
+            let failureCount = 0;
+            let skippedCount = 0;
+
+            console.log(`📊 Статистика пользователей для матча "${match.team_a} — ${match.team_b}":`);
+            console.log(`   👥 Всего пользователей: ${allUsers.length}`);
+            console.log(`   🔮 Уже сделали прогнозы: ${allUsers.length - usersWithoutPrediction.length}`);
+            console.log(`   📤 Нужно уведомить: ${usersWithoutPrediction.length}`);
+
+            if (usersWithoutPrediction.length === 0) {
+                console.log(`✅ Все пользователи уже сделали прогнозы на матч "${match.team_a} — ${match.team_b}"`);
+                // Отмечаем уведомление как отправленное, даже если никого не уведомляли
+                await this.db.markMatchNotificationSent(match.id, 0);
+                return;
+            }
+
+            for (const user of usersWithoutPrediction) {
+                try {
+                    await this.bot.sendMessage(user.telegram_id, notificationText, {
+                        parse_mode: 'Markdown',
+                        reply_markup: {
+                            inline_keyboard: [
+                                [
+                                    { text: '🔮 Сделать прогноз', callback_data: `predict_${match.id}` },
+                                    { text: '⚽ Посмотреть матчи', callback_data: 'view_matches' }
+                                ]
+                            ]
+                        }
+                    });
+                    successCount++;
+                    
+                    // Небольшая задержка между отправками, чтобы не превысить лимиты API
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                } catch (error) {
+                    failureCount++;
+                    console.log(`❌ Не удалось отправить уведомление пользователю ${user.telegram_id}:`, error.message);
+                }
+            }
+
+            // Отмечаем уведомление как отправленное
+            await this.db.markMatchNotificationSent(match.id, successCount);
+            
+            console.log(`✅ Уведомление о матче "${match.team_a} — ${match.team_b}" отправлено:`);
+            console.log(`   📤 Успешно: ${successCount} пользователей`);
+            if (failureCount > 0) {
+                console.log(`   ❌ Неудачно: ${failureCount} пользователей`);
+            }
+
+        } catch (error) {
+            console.error('❌ Ошибка при отправке уведомления о матче:', error);
+        }
+    }
+
+    // Обработка callback для просмотра матчей из уведомления
+    async handleViewMatchesCallback(chatId) {
+        try {
+            const matches = await this.db.getActiveMatches();
+            
+            if (matches.length === 0) {
+                await this.bot.sendMessage(chatId, '📭 Активных матчей пока нет.');
+                return;
+            }
+
+            let text = '⚽ *Активные матчи:*\n\n';
+            
+            for (const match of matches) {
+                const matchTime = moment(match.match_date);
+                const isStarted = moment().isAfter(matchTime);
+                const timeInfo = isStarted ? '⏰ Прогнозы закрыты' : `📅 ${matchTime.format('DD.MM.YYYY HH:mm')}`;
+                
+                text += `🆔 #${match.id} **${match.team_a}** — **${match.team_b}**\n`;
+                text += `${timeInfo}\n\n`;
+            }
+
+            await this.bot.sendMessage(chatId, text, {
+                parse_mode: 'Markdown',
+                reply_markup: this.getMainKeyboard()
+            });
+        } catch (error) {
+            console.error('Ошибка при показе матчей из уведомления:', error);
+            await this.bot.sendMessage(chatId, 'Ошибка при загрузке матчей.');
+        }
     }
 }
 
