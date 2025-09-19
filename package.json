@@ -4,8 +4,12 @@
   "description": "Telegram bot for football match predictions with scoring system",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js"
+    "start": "node bot-control.js start",
+    "stop": "node bot-control.js stop",
+    "restart": "node bot-control.js restart",
+    "status": "node bot-control.js status",
+    "dev": "nodemon index.js",
+    "direct": "node index.js"
   },
   "keywords": ["telegram", "bot", "football", "predictions", "scoring"],
   "author": "",
