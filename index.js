@@ -3,6 +3,8 @@ const TelegramBot = require('node-telegram-bot-api');
 const Database = require('./database');
 const ScoringSystem = require('./scoring');
 const moment = require('moment');
+const http = require('http');
+const url = require('url');
 
 // Настройка локали для момента
 moment.locale('ru');
@@ -37,6 +39,10 @@ class PredictionBot {
         // Состояния для создания матчей
         this.userStates = new Map();
         
+        // Настройка HTTP сервера
+        this.port = process.env.PORT || 3000;
+        this.initializeHttpServer();
+        
         this.initializeAdmins();
         this.setupHandlers();
         this.startMatchNotificationChecker();
@@ -44,6 +50,164 @@ class PredictionBot {
         console.log(`👥 Настроено администраторов: ${this.adminIds.length}`);
         if (this.superAdminId) {
             console.log(`🔑 Главный администратор: ${this.superAdminId}`);
+        }
+    }
+
+    initializeHttpServer() {
+        this.server = http.createServer((req, res) => {
+            const parsedUrl = url.parse(req.url, true);
+            const pathname = parsedUrl.pathname;
+
+            // Настройка CORS
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+            res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+
+            if (req.method === 'OPTIONS') {
+                res.writeHead(200);
+                res.end();
+                return;
+            }
+
+            // Обработка маршрутов
+            if (pathname === '/') {
+                this.handleRootRoute(res);
+            } else if (pathname === '/status') {
+                this.handleStatusRoute(res);
+            } else if (pathname === '/health') {
+                this.handleHealthRoute(res);
+            } else if (pathname === '/stats') {
+                this.handleStatsRoute(res);
+            } else {
+                res.writeHead(404, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ error: 'Маршрут не найден' }));
+            }
+        });
+
+        this.server.listen(this.port, () => {
+            console.log(`🌐 HTTP сервер запущен на порту ${this.port}`);
+            console.log(`📊 Статус бота: http://localhost:${this.port}/status`);
+        });
+
+        this.server.on('error', (error) => {
+            if (error.code === 'EADDRINUSE') {
+                console.error(`❌ Порт ${this.port} уже используется. Попробуйте другой порт.`);
+                process.exit(1);
+            } else {
+                console.error('❌ Ошибка HTTP сервера:', error);
+            }
+        });
+    }
+
+    handleRootRoute(res) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        const html = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <title>Бот прогнозов футбола</title>
+            <style>
+                body { font-family: Arial, sans-serif; margin: 50px; background: #f5f5f5; }
+                .container { background: white; padding: 30px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                h1 { color: #2c3e50; }
+                .status { padding: 10px; background: #27ae60; color: white; border-radius: 5px; }
+                .links { margin-top: 20px; }
+                .links a { display: inline-block; margin: 5px 10px 5px 0; padding: 10px 15px; background: #3498db; color: white; text-decoration: none; border-radius: 5px; }
+                .links a:hover { background: #2980b9; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🤖 Бот прогнозов футбола</h1>
+                <div class="status">✅ Бот работает нормально</div>
+                <div class="links">
+                    <a href="/status">📊 Статус JSON</a>
+                    <a href="/health">🏥 Проверка здоровья</a>
+                    <a href="/stats">📈 Статистика</a>
+                </div>
+                <p>Сервер запущен на порту ${this.port}</p>
+            </div>
+        </body>
+        </html>`;
+        res.end(html);
+    }
+
+    async handleStatusRoute(res) {
+        try {
+            const currentSeason = await this.db.getCurrentSeason();
+            const usersCount = await this.db.getUsersCount();
+            const activeMatches = await this.db.getActiveMatches();
+            
+            const status = {
+                bot: {
+                    status: 'running',
+                    uptime: process.uptime(),
+                    memory: process.memoryUsage(),
+                    port: this.port
+                },
+                telegram: {
+                    admins_count: this.adminIds.length,
+                    super_admin: this.superAdminId
+                },
+                database: {
+                    users_count: usersCount || 0,
+                    active_matches: activeMatches.length,
+                    current_season: currentSeason ? currentSeason.name : 'Нет активного сезона'
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(status, null, 2));
+        } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Ошибка получения статуса', details: error.message }));
+        }
+    }
+
+    handleHealthRoute(res) {
+        const health = {
+            status: 'healthy',
+            timestamp: new Date().toISOString(),
+            uptime: process.uptime()
+        };
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(health));
+    }
+
+    async handleStatsRoute(res) {
+        try {
+            const leaders = await this.db.getLeaderboard(10);
+            const currentSeason = await this.db.getCurrentSeason();
+            const totalMatches = await this.db.getTotalMatchesCount();
+            const totalPredictions = await this.db.getTotalPredictionsCount();
+
+            const stats = {
+                season: currentSeason ? {
+                    name: currentSeason.name,
+                    number: currentSeason.season_number,
+                    start_date: currentSeason.start_date
+                } : null,
+                leaderboard: leaders.map((user, index) => ({
+                    position: index + 1,
+                    name: user.first_name || user.username || 'Аноним',
+                    points: user.total_points
+                })),
+                totals: {
+                    matches: totalMatches || 0,
+                    predictions: totalPredictions || 0,
+                    users: leaders.length
+                },
+                timestamp: new Date().toISOString()
+            };
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(stats, null, 2));
+        } catch (error) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Ошибка получения статистики', details: error.message }));
         }
     }
 
@@ -359,7 +523,7 @@ class PredictionBot {
         const resultA = parseInt(match[2]);
         const resultB = parseInt(match[3]);
 
-        await this.finishMatch(chatId, matchId, resultA, resultB);
+        await this.finishMatch(chatId, matchId, resultA, resultB, userId);
     }
 
     async handleCancel(msg) {
@@ -492,7 +656,12 @@ class PredictionBot {
         } else if (userState.step === 'date') {
             const matchDate = this.parseDate(text);
             if (!matchDate) {
-                await this.bot.sendMessage(chatId, '❌ Неверный формат даты. Используйте: ДД.ММ.ГГГГ ЧЧ:ММ');
+                await this.bot.sendMessage(chatId, '❌ Неверный формат даты. Используйте: ДД.ММ.ГГГГ ЧЧ:ММ', {
+                    reply_markup: { 
+                        keyboard: [['❌ Отмена']], 
+                        resize_keyboard: true 
+                    }
+                });
                 return;
             }
 
@@ -554,7 +723,12 @@ class PredictionBot {
 
         const match = text.match(/^(\d+):(\d+)$/);
         if (!match) {
-            await this.bot.sendMessage(chatId, '❌ Неверный формат. Введите прогноз в формате "X:Y" (например, 2:1)');
+            await this.bot.sendMessage(chatId, '❌ Неверный формат. Введите прогноз в формате "X:Y" (например, 2:1)', {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
@@ -562,12 +736,16 @@ class PredictionBot {
         const predB = parseInt(match[2]);
 
         if (!ScoringSystem.isValidPrediction(predA, predB)) {
-            await this.bot.sendMessage(chatId, '❌ Некорректный прогноз. Результат должен быть от 0 до 20 голов.');
+            await this.bot.sendMessage(chatId, '❌ Некорректный прогноз. Результат должен быть от 0 до 20 голов.', {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
         await this.makePrediction(chatId, userId, userState.matchId, predA, predB);
-        this.userStates.delete(userId);
     }
 
     async handleFinishMatchProcess(msg, userState) {
@@ -577,7 +755,12 @@ class PredictionBot {
 
         const match = text.match(/^(\d+):(\d+)$/);
         if (!match) {
-            await this.bot.sendMessage(chatId, '❌ Неверный формат. Введите результат в формате "X:Y" (например, 2:1)');
+            await this.bot.sendMessage(chatId, '❌ Неверный формат. Введите результат в формате "X:Y" (например, 2:1)', {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
@@ -585,12 +768,16 @@ class PredictionBot {
         const resultB = parseInt(match[2]);
 
         if (!ScoringSystem.isValidPrediction(resultA, resultB)) {
-            await this.bot.sendMessage(chatId, '❌ Некорректный результат. Счет должен быть от 0 до 20 голов.');
+            await this.bot.sendMessage(chatId, '❌ Некорректный результат. Счет должен быть от 0 до 20 голов.', {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
-        await this.finishMatch(chatId, userState.matchId, resultA, resultB);
-        this.userStates.delete(userId);
+        await this.finishMatch(chatId, userState.matchId, resultA, resultB, userId);
     }
 
     async startPredictionProcess(chatId, userId, matchId) {
@@ -637,19 +824,31 @@ class PredictionBot {
         try {
             const match = await this.db.getMatch(matchId);
             if (!match) {
-                await this.bot.sendMessage(chatId, '❌ Матч не найден.');
+                await this.bot.sendMessage(chatId, '❌ Матч не найден.', {
+                    reply_markup: this.getMainKeyboard()
+                });
+                // Удаляем состояние пользователя при ошибке
+                this.userStates.delete(userId);
                 return;
             }
 
             if (match.is_finished) {
-                await this.bot.sendMessage(chatId, '❌ Матч уже завершен.');
+                await this.bot.sendMessage(chatId, '❌ Матч уже завершен.', {
+                    reply_markup: this.getMainKeyboard()
+                });
+                // Удаляем состояние пользователя при ошибке
+                this.userStates.delete(userId);
                 return;
             }
 
             // Проверяем время
             const matchTime = moment(match.match_date);
             if (moment().isAfter(matchTime)) {
-                await this.bot.sendMessage(chatId, '❌ Время для прогнозов на этот матч истекло.');
+                await this.bot.sendMessage(chatId, '❌ Время для прогнозов на этот матч истекло.', {
+                    reply_markup: this.getMainKeyboard()
+                });
+                // Удаляем состояние пользователя при ошибке
+                this.userStates.delete(userId);
                 return;
             }
 
@@ -659,22 +858,36 @@ class PredictionBot {
                 `✅ Прогноз принят!\n\n⚽ ${match.team_a} — ${match.team_b}\n🔮 Ваш прогноз: ${ScoringSystem.formatPrediction(predA, predB)}\n📅 Матч: ${moment(match.match_date).format('DD.MM.YYYY HH:mm')}`,
                 { reply_markup: this.getMainKeyboard() }
             );
+            // Удаляем состояние пользователя после успешного создания прогноза
+            this.userStates.delete(userId);
         } catch (error) {
             console.error('Ошибка при сохранении прогноза:', error);
-            await this.bot.sendMessage(chatId, '❌ Ошибка при сохранении прогноза.');
+            await this.bot.sendMessage(chatId, '❌ Ошибка при сохранении прогноза.', {
+                reply_markup: this.getMainKeyboard()
+            });
+            // Удаляем состояние пользователя при ошибке
+            this.userStates.delete(userId);
         }
     }
 
-    async finishMatch(chatId, matchId, resultA, resultB) {
+    async finishMatch(chatId, matchId, resultA, resultB, userId = null) {
         try {
             const match = await this.db.getMatch(matchId);
             if (!match) {
-                await this.bot.sendMessage(chatId, '❌ Матч не найден.');
+                await this.bot.sendMessage(chatId, '❌ Матч не найден.', {
+                    reply_markup: this.getMainKeyboard()
+                });
+                // Удаляем состояние пользователя при ошибке
+                if (userId) this.userStates.delete(userId);
                 return;
             }
 
             if (match.is_finished) {
-                await this.bot.sendMessage(chatId, '❌ Матч уже завершен.');
+                await this.bot.sendMessage(chatId, '❌ Матч уже завершен.', {
+                    reply_markup: this.getMainKeyboard()
+                });
+                // Удаляем состояние пользователя при ошибке
+                if (userId) this.userStates.delete(userId);
                 return;
             }
 
@@ -719,11 +932,21 @@ class PredictionBot {
                 resultText += `😔 На этот матч не было прогнозов.`;
             }
 
-            await this.bot.sendMessage(chatId, resultText, { parse_mode: 'Markdown' });
+            await this.bot.sendMessage(chatId, resultText, { 
+                parse_mode: 'Markdown',
+                reply_markup: this.getMainKeyboard()
+            });
+            
+            // Удаляем состояние пользователя после успешного завершения матча
+            if (userId) this.userStates.delete(userId);
 
         } catch (error) {
             console.error('Ошибка при завершении матча:', error);
-            await this.bot.sendMessage(chatId, '❌ Ошибка при завершении матча.');
+            await this.bot.sendMessage(chatId, '❌ Ошибка при завершении матча.', {
+                reply_markup: this.getMainKeyboard()
+            });
+            // Удаляем состояние пользователя при ошибке
+            if (userId) this.userStates.delete(userId);
         }
     }
 
@@ -886,12 +1109,22 @@ class PredictionBot {
         const points = parseInt(text);
         
         if (isNaN(points)) {
-            await this.bot.sendMessage(chatId, '❌ Введите корректное число.');
+            await this.bot.sendMessage(chatId, '❌ Введите корректное число.', {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
         if (action === 'set' && points < 0) {
-            await this.bot.sendMessage(chatId, '❌ Количество баллов не может быть отрицательным при установке.');
+            await this.bot.sendMessage(chatId, '❌ Количество баллов не может быть отрицательным при установке.', {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
@@ -1365,7 +1598,12 @@ class PredictionBot {
         const adminIndex = parseInt(text) - 1;
         
         if (isNaN(adminIndex) || adminIndex < 0 || adminIndex >= userState.admins.length) {
-            await this.bot.sendMessage(chatId, '❌ Некорректный номер. Введите число от 1 до ' + userState.admins.length);
+            await this.bot.sendMessage(chatId, '❌ Некорректный номер. Введите число от 1 до ' + userState.admins.length, {
+                reply_markup: { 
+                    keyboard: [['❌ Отмена']], 
+                    resize_keyboard: true 
+                }
+            });
             return;
         }
 
@@ -1602,7 +1840,65 @@ class PredictionBot {
             await this.bot.sendMessage(chatId, 'Ошибка при загрузке матчей.');
         }
     }
+
+    // Корректное завершение работы
+    async shutdown() {
+        console.log('🛑 Получен сигнал завершения работы...');
+        
+        // Останавливаем HTTP сервер
+        if (this.server) {
+            console.log('🌐 Закрытие HTTP сервера...');
+            this.server.close(() => {
+                console.log('✅ HTTP сервер закрыт');
+            });
+        }
+
+        // Останавливаем уведомления
+        if (this.notificationInterval) {
+            clearInterval(this.notificationInterval);
+            console.log('🔔 Система уведомлений остановлена');
+        }
+
+        // Останавливаем Telegram бота
+        if (this.bot) {
+            console.log('🤖 Остановка Telegram бота...');
+            await this.bot.stopPolling();
+            console.log('✅ Telegram бот остановлен');
+        }
+
+        // Закрываем базу данных
+        if (this.db) {
+            console.log('💾 Закрытие подключения к базе данных...');
+            await this.db.close();
+            console.log('✅ База данных закрыта');
+        }
+
+        console.log('👋 Бот завершил работу корректно');
+        process.exit(0);
+    }
 }
 
 // Запуск бота
 const bot = new PredictionBot();
+
+// Обработка сигналов завершения
+process.on('SIGTERM', async () => {
+    console.log('📞 Получен SIGTERM');
+    await bot.shutdown();
+});
+
+process.on('SIGINT', async () => {
+    console.log('📞 Получен SIGINT (Ctrl+C)');
+    await bot.shutdown();
+});
+
+process.on('uncaughtException', (error) => {
+    console.error('💥 Необработанное исключение:', error);
+    bot.shutdown();
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('💥 Необработанное отклонение промиса:', reason);
+    console.error('🔍 Promise:', promise);
+    bot.shutdown();
+});

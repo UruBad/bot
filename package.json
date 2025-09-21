@@ -8,8 +8,12 @@
     "stop": "node bot-control.js stop",
     "restart": "node bot-control.js restart",
     "status": "node bot-control.js status",
+    "start:port": "node bot-control.js start",
+    "restart:port": "node bot-control.js restart",
     "dev": "nodemon index.js",
-    "direct": "node index.js"
+    "dev:port": "nodemon --exec \"node index.js\"",
+    "direct": "node index.js",
+    "test": "node tests.js"
   },
   "keywords": ["telegram", "bot", "football", "predictions", "scoring"],
   "author": "",

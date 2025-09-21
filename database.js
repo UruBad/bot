@@ -807,6 +807,51 @@ class Database {
         });
     }
 
+    async getUsersCount() {
+        return new Promise((resolve, reject) => {
+            this.db.get(`
+                SELECT COUNT(*) as count
+                FROM users
+            `, (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(row.count);
+                }
+            });
+        });
+    }
+
+    async getTotalMatchesCount() {
+        return new Promise((resolve, reject) => {
+            this.db.get(`
+                SELECT COUNT(*) as count
+                FROM matches
+            `, (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(row.count);
+                }
+            });
+        });
+    }
+
+    async getTotalPredictionsCount() {
+        return new Promise((resolve, reject) => {
+            this.db.get(`
+                SELECT COUNT(*) as count
+                FROM predictions
+            `, (err, row) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    resolve(row.count);
+                }
+            });
+        });
+    }
+
     close() {
         this.db.close();
     }

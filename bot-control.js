@@ -36,7 +36,7 @@ function removePidFile() {
     }
 }
 
-function startBot() {
+function startBot(port) {
     const existingPid = getPid();
     if (existingPid) {
         console.log(`🤖 Бот уже запущен (PID: ${existingPid})`);
@@ -44,9 +44,18 @@ function startBot() {
     }
 
     console.log('🚀 Запускаю бота...');
+    
+    // Настройка переменных окружения
+    const env = { ...process.env };
+    if (port) {
+        env.PORT = port;
+        console.log(`🌐 Установлен порт: ${port}`);
+    }
+    
     const botProcess = spawn('node', ['index.js'], {
         detached: true,
-        stdio: ['ignore', 'pipe', 'pipe']
+        stdio: ['ignore', 'pipe', 'pipe'],
+        env: env
     });
 
     savePid(botProcess.pid);
@@ -95,11 +104,11 @@ function stopBot() {
     }
 }
 
-function restartBot() {
+function restartBot(port) {
     console.log('🔄 Перезапуск бота...');
     stopBot();
     setTimeout(() => {
-        startBot();
+        startBot(port);
     }, 2000);
 }
 
@@ -114,16 +123,17 @@ function statusBot() {
 
 // Обработка аргументов командной строки
 const command = process.argv[2];
+const port = process.argv[3]; // Опциональный порт
 
 switch (command) {
     case 'start':
-        startBot();
+        startBot(port);
         break;
     case 'stop':
         stopBot();
         break;
     case 'restart':
-        restartBot();
+        restartBot(port);
         break;
     case 'status':
         statusBot();
@@ -132,15 +142,21 @@ switch (command) {
         console.log('🤖 Управление ботом прогнозов');
         console.log('');
         console.log('Доступные команды:');
-        console.log('  node bot-control.js start    - Запустить бота');
-        console.log('  node bot-control.js stop     - Остановить бота');
-        console.log('  node bot-control.js restart  - Перезапустить бота');
-        console.log('  node bot-control.js status   - Проверить статус бота');
+        console.log('  node bot-control.js start [port]    - Запустить бота (опционально с портом)');
+        console.log('  node bot-control.js stop            - Остановить бота');
+        console.log('  node bot-control.js restart [port]  - Перезапустить бота (опционально с портом)');
+        console.log('  node bot-control.js status          - Проверить статус бота');
+        console.log('');
+        console.log('Примеры:');
+        console.log('  node bot-control.js start 8080      - Запустить на порту 8080');
+        console.log('  node bot-control.js restart 3001    - Перезапустить на порту 3001');
         console.log('');
         console.log('Или используйте npm команды:');
-        console.log('  npm start     - Запустить бота');
-        console.log('  npm run stop  - Остановить бота');
-        console.log('  npm run restart - Перезапустить бота');
-        console.log('  npm run status  - Проверить статус бота');
+        console.log('  npm start         - Запустить бота');
+        console.log('  npm run stop      - Остановить бота');
+        console.log('  npm run restart   - Перезапустить бота');
+        console.log('  npm run status    - Проверить статус бота');
+        console.log('  npm run dev       - Запустить в режиме разработки');
+        console.log('  npm run direct    - Запустить напрямую');
         break;
 }
